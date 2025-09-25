@@ -1,0 +1,226 @@
+version: "3.9"
+
+x-node-service: &node-service
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+  volumes:
+    - ../..:/workspace:delegated
+  working_dir: /workspace
+
+services:
+  redis-queue:
+    image: redis:7.2
+    container_name: docugen_redis_queue
+    command: ["redis-server", "--appendonly", "no"]
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - docugen-net
+
+  redis-cache:
+    image: redis:7.2
+    container_name: docugen_redis_cache
+    command: ["redis-server", "--appendonly", "no"]
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    networks:
+      - docugen-net
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.52.0
+    restart: unless-stopped
+    command: ["--redis.addr=redis://redis-queue:6379", "--redis.addr=redis://redis-cache:6379"]
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis-queue
+      - redis-cache
+    networks:
+      - docugen-net
+
+  postgres:
+    image: postgres:16
+    container_name: docugen_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: docugen
+      POSTGRES_USER: docugen
+      POSTGRES_PASSWORD: docugen
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../scripts:/workspace/scripts:ro
+    networks:
+      - docugen-net
+
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: docugen_vault
+    restart: unless-stopped
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "8200:8200"
+    command: ["server", "-dev"]
+    volumes:
+      - ./env:/workspace/env
+      - ./scripts:/workspace/scripts:ro
+    networks:
+      - docugen-net
+
+  vault-bootstrap:
+    image: node:20
+    depends_on:
+      - vault
+    volumes:
+      - ../..:/workspace
+    working_dir: /workspace
+    environment:
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: root
+    entrypoint: ["bash", "-lc", "sleep 5 && infra/compose/scripts/bootstrap-vault.sh"]
+    networks:
+      - docugen-net
+
+  api:
+    <<: *node-service
+    container_name: docugen_api
+    environment:
+      NODE_ENV: development
+      PORT: 8080
+      DATABASE_URL: postgres://docugen:docugen@postgres:5432/docugen
+      REDIS_QUEUE_URL: redis://redis-queue:6379
+      REDIS_CACHE_URL: redis://redis-cache:6379
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: docugen
+      MINIO_SECRET_KEY: docugen123
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: root
+      ALLOW_FALLBACK_SIGNING: "false"
+    depends_on:
+      - postgres
+      - redis-queue
+      - redis-cache
+      - vault
+    command: ["bash", "-lc", "pnpm --filter api dev"]
+    ports:
+      - "8080:8080"
+    networks:
+      - docugen-net
+
+  worker:
+    <<: *node-service
+    container_name: docugen_worker
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://docugen:docugen@postgres:5432/docugen
+      REDIS_QUEUE_URL: redis://redis-queue:6379
+      REDIS_CACHE_URL: redis://redis-cache:6379
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: docugen
+      MINIO_SECRET_KEY: docugen123
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: root
+      ALLOW_FALLBACK_SIGNING: "false"
+    depends_on:
+      - postgres
+      - redis-queue
+      - redis-cache
+      - vault
+    command: ["bash", "-lc", "pnpm --filter worker dev"]
+    networks:
+      - docugen-net
+
+  admin:
+    <<: *node-service
+    container_name: docugen_admin
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_BUNDLE_API_BASE: http://api:8080
+      NEXT_PUBLIC_WEBSOCKET_URL: ws://api:8080
+      NEXT_PUBLIC_KEYCLOAK_REALM: docugen
+      NEXT_PUBLIC_KEYCLOAK_CLIENT_ID: docugen-admin-ui
+      NEXT_PUBLIC_SENTRY_DSN: http://sentry:9000/1
+    depends_on:
+      - api
+    command: ["bash", "-lc", "pnpm --filter admin dev"]
+    ports:
+      - "3000:3000"
+    networks:
+      - docugen-net
+
+  scheduler:
+    image: node:20
+    container_name: docugen_scheduler
+    environment:
+      DATABASE_URL: postgres://docugen:docugen@postgres:5432/docugen
+      PROM_PUSH_GATEWAY_URL: http://prometheus-pushgateway:9091
+    volumes:
+      - ../..:/workspace
+    working_dir: /workspace
+    entrypoint: ["bash", "-lc", "while true; do infra/compose/scripts/maintain-audit-retention.sh || true; sleep 86400; done"]
+    depends_on:
+      - postgres
+      - prometheus-pushgateway
+    networks:
+      - docugen-net
+
+  prometheus-pushgateway:
+    image: prom/pushgateway:v1.7.0
+    ports:
+      - "9091:9091"
+    restart: unless-stopped
+    networks:
+      - docugen-net
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - docugen-net
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "3001:3000"
+    networks:
+      - docugen-net
+
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T00-00-00Z
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: docugen
+      MINIO_ROOT_PASSWORD: docugen123
+    ports:
+      - "9000:9000"
+    volumes:
+      - miniostore:/data
+    networks:
+      - docugen-net
+
+  sentry:
+    image: getsentry/sentry:24
+    environment:
+      SENTRY_SECRET_KEY: changeme
+      SENTRY_SINGLE_ORGANIZATION: "true"
+    ports:
+      - "9001:9000"
+    networks:
+      - docugen-net
+
+networks:
+  docugen-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+  miniostore:
