@@ -1,6 +1,17 @@
 # Epic 3 Operational Delivery & Observability
 Deliver the controls, packaging, and monitoring required for production readiness, enabling rapid operator workflows, secure artefact distribution, and actionable observability for engineering and compliance teams.
 
+## Story 3.0 Bootstrap Admin UI Shell and Foundation
+As a frontend platform engineer,
+I want an authenticated admin UI shell with shared navigation and design system wiring,
+so that subsequent compliance and operator features can plug into a consistent experience.
+
+### Acceptance Criteria
+1: Admin UI bootstraps Next.js (or chosen framework) with authentication guardrails, layout scaffolding, and navigation patterns.
+2: Shared design system components (e.g., typography, buttons, tables) align with `docs/user-interface-design-goals.md` and are ready for reuse.
+3: Role-based routing restricts access to protected views and displays fallback messaging for unauthorised users.
+4: Developer documentation describes UI architecture, component conventions, and contribution workflow.
+
 ## Story 3.1 Harden Compliance Gating and Operator UX
 As a lending operations supervisor,
 I want compliance gates and clear operator messaging in the generation workflow,

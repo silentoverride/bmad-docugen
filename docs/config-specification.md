@@ -1,12 +1,12 @@
 # Configuration Specification: `config.ts`
 
-This document provides a detailed specification for the `config.ts` file, which holds global constants for the Financial Document Generator application.
+This document provides a detailed specification for the `config.ts` file, which holds global constants for the DocuGen application.
 
 ## 1. Overview
 
-The `config.ts` file centralizes all static configuration variables used throughout the Financial Document Generator application. This configuration supports the generation of realistic bank statements and payslips by providing default values, bank-specific information, validation rules, and UI settings from a single source.
+The `config.ts` file centralizes all static configuration variables used throughout the DocuGen application. This configuration supports the generation of realistic bank statements and payslips by providing default values, bank-specific information, validation rules, and UI settings from a single source.
 
-> **Note:** This repository maintains the functional specification only. The concrete `config.ts` implementation lives in the downstream Financial Document Generator codebase; there is no `config.ts` checked into this documentation repo.
+> **Note:** This repository maintains the functional specification only. The concrete `config.ts` implementation lives in the downstream DocuGen codebase; there is no `config.ts` checked into this documentation repo.
 
 The configuration is exported as a typed TypeScript object, ensuring type safety across the codebase and supporting key application features including:
 
@@ -108,7 +108,7 @@ An object defining rules for validating user input in forms for bank statement a
 
 ### 2.8 `UI`
 
-An object containing constants that control the behavior and appearance of the user interface for the Financial Document Generator.
+An object containing constants that control the behavior and appearance of the user interface for DocuGen.
 
 | Property         | Type   | Description                                           | Example    |
 | ---------------- | ------ | ----------------------------------------------------- | ---------- |
@@ -122,7 +122,7 @@ An object containing constants that control the behavior and appearance of the u
 
 ## 3. Export Mechanism
 
-The `CONFIG` object is exported as the default export from the `config.ts` module, making it consumable by other TypeScript files using standard ES module `import` statements. This configuration is used throughout the Financial Document Generator application for:
+The `CONFIG` object is exported as the default export from the `config.ts` module, making it consumable by other TypeScript files using standard ES module `import` statements. This configuration is used throughout the DocuGen application for:
 
 - **Bank Statement Generation**: Providing default values for BSB numbers, bank information, and merchant data
 - **Payslip Generation**: Supplying pay frequency mappings and validation rules

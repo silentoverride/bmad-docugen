@@ -1,5 +1,5 @@
 # Introduction
-This document outlines the complete fullstack architecture for DocuGen, covering backend services, frontend experiences, and their integration across the CLI and admin surfaces that power the Financial Document Generator. It serves as the single source of truth for Codex automation agents to execute deterministic, compliance-ready builds that uphold NAB fidelity requirements.
+This document outlines the complete fullstack architecture for DocuGen, covering backend services, frontend experiences, and their integration across the CLI and admin surfaces that power the DocuGen platform. It serves as the single source of truth for Codex automation agents to execute deterministic, compliance-ready builds that uphold NAB fidelity requirements.
 
 By replacing separate backend and frontend architecture docs, we keep operations, compliance, and integration stakeholders aligned on one blueprint, ensuring regulatory guardrails, audit traceability, and automation guardrails remain front-and-center. This unified approach also streamlines coordination for engineers extending DocuGen’s APIs and UI surfaces.
 

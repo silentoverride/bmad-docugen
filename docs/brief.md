@@ -1,10 +1,10 @@
-# Project Brief: Financial Document Generator
+# Project Brief: DocuGen
 
 ## Introduction
-This brief captures a YOLO-mode synthesis of the available documentation in `docs/` to accelerate alignment on the Financial Document Generator initiative. Source material includes the bank statement, payslip, Google Places integration, PDF generation, and configuration specifications that collectively describe the existing solution space.
+This brief captures a YOLO-mode synthesis of the available documentation in `docs/` to accelerate alignment on the DocuGen initiative. Source material includes the bank statement, payslip, Google Places integration, PDF generation, and configuration specifications that collectively describe the existing solution space.
 
 ## Executive Summary
-The Financial Document Generator produces lender-grade Australian financial artefacts—bank statements, payslips, and NAB proofs of balance—that align across data sources and withstand compliance scrutiny. It serves loan origination and verification flows by combining configurable data models, realistic transaction synthesis, and pixel-perfect document rendering. The product targets lending teams that need trustworthy supporting evidence and fintech builders who embed automated document experiences.
+DocuGen produces lender-grade Australian financial artefacts—bank statements, payslips, and NAB proofs of balance—that align across data sources and withstand compliance scrutiny. It serves loan origination and verification flows by combining configurable data models, realistic transaction synthesis, and pixel-perfect document rendering. The product targets lending teams that need trustworthy supporting evidence and fintech builders who embed automated document experiences.
 
 ## Problem Statement
 Current lending pipelines rely on applicants manually uploading disparate proofs of income and balance. The artefacts are often inconsistent, mismatched across statements and payslips, or fail to meet regulatory format expectations, triggering rework and delays. Compliance checks require precise Australian regulatory alignment and verifiable merchant data that generic generators cannot provide. Teams need a controlled way to create coherent document sets that mirror real NAB outputs while maintaining auditable traceability across generated artefacts.
@@ -133,4 +133,4 @@ No direct stakeholder interviews captured yet; align with lending ops leads befo
 4. Define QA regression plan covering document fidelity and data alignment scenarios.
 
 ### PM Handoff
-This Project Brief provides the full context for Financial Document Generator. Please start in 'PRD Generation Mode', review the brief thoroughly to work with the user to create the PRD section by section as the template indicates, asking for any necessary clarification or suggesting improvements.
+This Project Brief provides the full context for DocuGen. Please start in 'PRD Generation Mode', review the brief thoroughly to work with the user to create the PRD section by section as the template indicates, asking for any necessary clarification or suggesting improvements.
