@@ -6,7 +6,9 @@ import dataclasses
 import json
 import logging
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Sequence
+from typing import Iterable, List, Optio
+49
+nal, Sequence
 
 from .shared import MissingDependencyError
 
@@ -109,7 +111,6 @@ class PDFToHTMLConverter:
         self.dpi = dpi
         self.assets_dir = self.output_dir / assets_subdir
         self._laparams = laparams
-        self._cached_pdfminer_pages: Optional[List[Any]] = None
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.assets_dir.mkdir(parents=True, exist_ok=True)
 
@@ -128,10 +129,6 @@ class PDFToHTMLConverter:
 
         LOGGER.info("Starting conversion of %s", self.pdf_path)
         layouts = list(self._extract_layout())
-        embedded_images = self.extract_embedded_images()
-        for index, page_images in enumerate(embedded_images):
-            if index < len(layouts):
-                layouts[index].images = page_images
         page_images = self._render_page_images()
         html_path = self.output_dir / "index.html"
         css_path = self.output_dir / "styles.css"
@@ -150,10 +147,9 @@ class PDFToHTMLConverter:
         _ensure_pdfminer()
         laparams = self._laparams or LAParams(line_margin=0.1, char_margin=2.0, word_margin=0.2)
 
-        page_layouts = list(extract_pages(self.pdf_path, laparams=laparams))
-        self._cached_pdfminer_pages = page_layouts
-
-        for page_index, page_layout in enumerate(page_layouts):
+        for page_index, page_layout in enumerate(
+            extract_pages(self.pdf_path, laparams=laparams)
+        ):
             texts: List[TextElement] = []
             images: List[str] = []
             width = float(getattr(page_layout, "width", 0) or 0)
@@ -162,11 +158,11 @@ class PDFToHTMLConverter:
             for element in page_layout:
                 if isinstance(element, (LTTextContainer, LTTextBox, LTTextBoxHorizontal)):
                     texts.extend(self._extract_text_elements(element, height))
+                elif isinstance(element, LTImage):
+                    images.append(self._save_raw_image(page_index, element))
 
-            LOGGER.debug("Page %s extracted: %s texts", page_index + 1, len(texts))
+            LOGGER.debug("Page %s extracted: %s texts, %s images", page_index + 1, len(texts), len(images))
             yield PageLayout(width=width, height=height, texts=texts, images=images)
-
-        # Leave the cached page layouts accessible for image extraction fallbacks.
 
     def _extract_text_elements(self, container: LTTextContainer, page_height: float) -> List[TextElement]:
         elements: List[TextElement] = []
@@ -204,133 +200,17 @@ class PDFToHTMLConverter:
     # ------------------------------------------------------------------
     # Image extraction and rendering
     # ------------------------------------------------------------------
-    def extract_embedded_images(self) -> List[List[str]]:
-        """Extract all embedded images into the assets directory.
-
-        Returns:
-            List of relative asset paths for each page in the document.
-        """
-
-        if fitz is not None:
-            return self._extract_images_with_pymupdf()
-
-        LOGGER.debug("PyMuPDF is unavailable; falling back to pdfminer for image extraction.")
-        return self._extract_images_with_pdfminer()
-
-    def _extract_images_with_pymupdf(self) -> List[List[str]]:
-        assert fitz is not None  # narrow type for static checkers
-        embedded: List[List[str]] = []
-        with fitz.open(self.pdf_path) as doc:  # type: ignore[arg-type]
-            for page_index in range(doc.page_count):
-                page = doc.load_page(page_index)
-                page_images: List[str] = []
-                self._clear_page_image_assets(page_index)
-                for image_number, image_info in enumerate(page.get_images(full=True), start=1):
-                    xref = image_info[0]
-                    try:
-                        base_image = doc.extract_image(xref)
-                    except RuntimeError as exc:  # pragma: no cover - rare corrupt PDFs
-                        LOGGER.warning("Failed to extract image %s on page %s: %s", xref, page_index + 1, exc)
-                        continue
-
-                    image_bytes = base_image.get("image")
-                    if not image_bytes:
-                        continue
-                    extension = base_image.get("ext", "png") or "png"
-                    asset_path = self.assets_dir / f"page_{page_index + 1}_image_{image_number}.{extension}"
-                    with open(asset_path, "wb") as fh:
-                        fh.write(image_bytes)
-                    page_images.append(str(asset_path.relative_to(self.output_dir)))
-                embedded.append(page_images)
-        return embedded
-
-    def _extract_images_with_pdfminer(self) -> List[List[str]]:
-        _ensure_pdfminer()
-        laparams = self._laparams or LAParams(line_margin=0.1, char_margin=2.0, word_margin=0.2)
-        embedded: List[List[str]] = []
-
-        page_layouts = self._cached_pdfminer_pages
-        if not page_layouts:
-            page_layouts = list(extract_pages(self.pdf_path, laparams=laparams))
-            self._cached_pdfminer_pages = page_layouts
-
-        for page_index, page_layout in enumerate(page_layouts):
-            page_images: List[str] = []
-            self._clear_page_image_assets(page_index)
-            for image_number, image in enumerate(self._iter_lt_images(page_layout), start=1):
-                saved = self._save_raw_image(page_index, image_number, image)
-                if saved:
-                    page_images.append(saved)
-            embedded.append(page_images)
-
-        return embedded
-
-    def _iter_lt_images(self, layout_obj) -> Iterable:
-        if LTImage is None:
-            return
-        if isinstance(layout_obj, LTImage):
-            yield layout_obj
-            return
-
-        for child in getattr(layout_obj, "_objs", []) or []:
-            yield from self._iter_lt_images(child)
-
-    def _save_raw_image(self, page_index: int, image_number: int, image: LTImage) -> Optional[str]:
-        stream = getattr(image, "stream", None)
-        if stream is None or not hasattr(stream, "get_data"):
-            return None
-
-        try:
+    def _save_raw_image(self, page_index: int, image: LTImage) -> str:
+        stream = image.stream
+        if stream and hasattr(stream, "get_data"):
             data = stream.get_data()
-        except Exception as exc:  # pragma: no cover - depends on PDF contents
-            LOGGER.warning("Failed to decode image %s on page %s: %s", getattr(image, "name", ""), page_index + 1, exc)
-            return None
-
-        filters: List[str] = []
-        if hasattr(stream, "get_filters"):
-            try:
-                filters = [f.lower() for f in stream.get_filters() or []]
-            except Exception:  # pragma: no cover - defensive path
-                filters = []
-
-        extension = self._resolve_image_extension(filters, image)
-        asset_path = self.assets_dir / f"page_{page_index + 1}_image_{image_number}.{extension}"
-
-        try:
-            with open(asset_path, "wb") as fh:
+            ext = image.name.split(".")[-1].lower()
+            ext = ext if ext in {"png", "jpg", "jpeg"} else "png"
+            filename = self.assets_dir / f"page_{page_index + 1}_img_{image.name}.{ext}"
+            with open(filename, "wb") as fh:
                 fh.write(data)
-        except OSError as exc:  # pragma: no cover - filesystem errors are environment-specific
-            LOGGER.warning("Failed to write image asset %s: %s", asset_path.name, exc)
-            return None
-
-        return str(asset_path.relative_to(self.output_dir))
-
-    def _resolve_image_extension(self, filters: Sequence[str], image: LTImage) -> str:
-        filter_set = {f.lower() for f in filters}
-        if "dctdecode" in filter_set:
-            return "jpg"
-        if "jpxdecode" in filter_set:
-            return "jp2"
-        if "ccittfaxdecode" in filter_set:
-            return "tiff"
-
-        name = getattr(image, "name", "") or ""
-        if "." in name:
-            suffix = name.split(".")[-1].lower()
-            if suffix in {"png", "jpg", "jpeg", "jp2", "tiff", "bmp", "gif"}:
-                return suffix
-
-        if filter_set:
-            LOGGER.debug("Unhandled image filters %s; defaulting to png for %s", filter_set, name)
-        return "png"
-
-    def _clear_page_image_assets(self, page_index: int) -> None:
-        prefix = f"page_{page_index + 1}_image_"
-        for asset in self.assets_dir.glob(f"{prefix}*"):
-            try:
-                asset.unlink()
-            except OSError:  # pragma: no cover - filesystem permissions
-                LOGGER.debug("Unable to remove stale image asset %s", asset)
+            return str(filename.relative_to(self.output_dir))
+        return ""
 
     def _render_page_images(self) -> List[Optional[str]]:
         if fitz is None and convert_from_path is None:
@@ -454,7 +334,6 @@ class PDFToHTMLConverter:
                     "height": layout.height,
                     "text_count": len(layout.texts),
                     "image_count": len([img for img in layout.images if img]),
-                    "images": layout.images,
                     "background": page_images[index] if index < len(page_images) else None,
                 }
                 for index, layout in enumerate(layouts)
