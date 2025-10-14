@@ -450,14 +450,10 @@ class PDFToHTMLConverter:
                     color = self._color_tuple_to_css(fill, drawing.get("fill_opacity"))
                     if color is None:
                         continue
-                    for rect in self._rects_from_drawing(drawing):
+                    for rect in self._shape_rects_from_drawing(drawing):
                         width = float(rect.width)
                         height = float(rect.height)
                         if width <= 0 or height <= 0:
-                            continue
-                        coverage = (width * height) / page_area
-                        if coverage >= MAX_EMBEDDED_IMAGE_PAGE_COVERAGE:
-                            # Treat massive rectangles as full-page backgrounds which users typically handle via CSS.
                             continue
                         layout.shapes.append(
                             ShapeElement(
@@ -469,15 +465,80 @@ class PDFToHTMLConverter:
                             )
                         )
 
-    def _rects_from_drawing(self, drawing: Any) -> Iterable[Any]:
+    def _shape_rects_from_drawing(self, drawing: Any) -> Iterable[Any]:
         items = drawing.get("items") or []
+        path_points: list[tuple[float, float]] = []
         for item in items:
             if not item or len(item) < 2:
                 continue
             op = item[0]
-            rect = item[1]
-            if op == "re" and rect is not None:
+            data = item[1]
+            if op == "re" and data is not None:
+                if path_points:
+                    rect = self._points_to_rect(path_points)
+                    if rect is not None:
+                        yield rect
+                    path_points = []
+                yield data
+                continue
+
+            if op == "m" and path_points:
+                rect = self._points_to_rect(path_points)
+                if rect is not None:
+                    yield rect
+                path_points = []
+
+            points = self._extract_points(data)
+            if points:
+                path_points.extend(points)
+
+            if op in {"h", "n"} and path_points:
+                rect = self._points_to_rect(path_points)
+                if rect is not None:
+                    yield rect
+                path_points = []
+
+        if path_points:
+            rect = self._points_to_rect(path_points)
+            if rect is not None:
                 yield rect
+
+    def _extract_points(self, data: Any) -> list[tuple[float, float]]:
+        points: list[tuple[float, float]] = []
+
+        if hasattr(data, "x") and hasattr(data, "y"):
+            points.append((float(data.x), float(data.y)))
+        elif isinstance(data, (list, tuple)):
+            for item in data:
+                if hasattr(item, "x") and hasattr(item, "y"):
+                    points.append((float(item.x), float(item.y)))
+                elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                    try:
+                        x = float(item[0])
+                        y = float(item[1])
+                    except (TypeError, ValueError):
+                        continue
+                    points.append((x, y))
+        return points
+
+    def _points_to_rect(self, points: Sequence[tuple[float, float]]) -> Any:
+        if len(points) < 2:
+            return None
+
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        min_x = min(xs)
+        max_x = max(xs)
+        min_y = min(ys)
+        max_y = max(ys)
+
+        if max_x <= min_x or max_y <= min_y:
+            return None
+
+        if fitz is not None:
+            return fitz.Rect(min_x, min_y, max_x, max_y)
+
+        return type("Rect", (), {"x0": min_x, "y0": min_y, "x1": max_x, "y1": max_y, "width": max_x - min_x, "height": max_y - min_y})()
 
     def _color_tuple_to_css(self, color: Sequence[float] | None, opacity: float | None) -> str | None:
         if not color:
