@@ -58,7 +58,8 @@ class VisualRegressionTester:
             with sync_playwright() as p:
                 browser = p.chromium.launch()
                 page = browser.new_page(viewport={"width": max(width, 10), "height": max(height, 10)})
-                page.goto(html_path.as_uri())
+                target_uri = html_path.resolve().as_uri()
+                page.goto(target_uri)
                 page.wait_for_timeout(int(self.wait_for * 1000))
                 page.screenshot(path=str(output_path), full_page=True)
                 browser.close()
@@ -131,7 +132,10 @@ class TemplateRefiner:
 
         for iteration in range(1, self.max_iterations + 1):
             LOGGER.info("Refinement iteration %s (scale=%.3f)", iteration, current_scale)
-            html_path = self.converter.convert(text_scale=current_scale)
+            # Ensure the generated HTML is referenced via an absolute path so Playwright can
+            # reliably open it even when the converter/output directory was provided as a
+            # relative location.
+            html_path = self.converter.convert(text_scale=current_scale).resolve()
 
             iteration_dir = self.output_dir / f"iteration_{iteration}"
             iteration_dir.mkdir(exist_ok=True)
