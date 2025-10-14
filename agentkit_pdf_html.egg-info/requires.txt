@@ -1,0 +1,7 @@
+pdfminer.six>=20221105
+pillow>=10.0.0
+playwright>=1.40.0
+
+[render]
+pymupdf>=1.23.8
+pdf2image>=1.17.0
