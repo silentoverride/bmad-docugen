@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: agentkit-pdf-html
+Version: 0.1.0
+Summary: Utilities for converting PDFs into pixel-perfect HTML with visual regression testing.
+Author: Agentkit
+Requires-Python: >=3.10
+Requires-Dist: pdfminer.six>=20221105
+Requires-Dist: pillow>=10.0.0
+Requires-Dist: playwright>=1.40.0
+Provides-Extra: render
+Requires-Dist: pymupdf>=1.23.8; extra == "render"
+Requires-Dist: pdf2image>=1.17.0; extra == "render"
