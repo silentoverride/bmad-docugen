@@ -67,7 +67,7 @@ FONT_FAMILY_OMIT_TOKENS = {
     "compressed",
 }
 
-MAX_EMBEDDED_IMAGE_PAGE_COVERAGE = 0.6
+MAX_EMBEDDED_IMAGE_PAGE_COVERAGE = 0.95
 
 
 def _ensure_pdfminer() -> None:
@@ -153,7 +153,18 @@ class PageLayout:
     width: float
     height: float
     texts: list[TextElement]
-    images: list[str]
+    images: list["ImageElement"]
+
+
+@dataclasses.dataclass
+class ImageElement:
+    """Represents an embedded image extracted from a PDF page."""
+
+    src: str
+    left: float
+    top: float
+    width: float
+    height: float
 
 
 class PDFToHTMLConverter:
@@ -224,7 +235,7 @@ class PDFToHTMLConverter:
 
         for page_index, page_layout in enumerate(page_layouts):
             texts: list[TextElement] = []
-            images: list[str] = []
+            images: list[ImageElement] = []
             width = float(getattr(page_layout, "width", 0) or 0)
             height = float(getattr(page_layout, "height", 0) or 0)
 
@@ -318,11 +329,11 @@ class PDFToHTMLConverter:
 
         return family, font_style, font_weight
 
-    def extract_embedded_images(self) -> list[list[str]]:
+    def extract_embedded_images(self) -> list[list[ImageElement]]:
         """Extract all embedded images into the assets directory.
 
         Returns:
-            List of relative asset paths for each page in the document.
+            List of image metadata collections for each page in the document.
         """
 
         if fitz is not None:
@@ -331,17 +342,21 @@ class PDFToHTMLConverter:
         LOGGER.debug("PyMuPDF is unavailable; falling back to pdfminer for image extraction.")
         return self._extract_images_with_pdfminer()
 
-    def _extract_images_with_pymupdf(self) -> list[list[str]]:
+    def _extract_images_with_pymupdf(self) -> list[list[ImageElement]]:
         assert fitz is not None  # narrow type for static checkers
-        embedded: list[list[str]] = []
+        embedded: list[list[ImageElement]] = []
         with fitz.open(self.pdf_path) as doc:  # type: ignore[arg-type]
             for page_index in range(doc.page_count):
                 page = doc.load_page(page_index)
-                page_images: list[str] = []
+                page_height = float(page.rect.height)
+                page_images: list[ImageElement] = []
                 self._clear_page_image_assets(page_index)
                 for image_number, image_info in enumerate(page.get_images(full=True), start=1):
                     xref = image_info[0]
-                    if self._pymupdf_image_covers_page(page, xref):
+                    rects = self._pymupdf_image_rects(page, xref)
+                    if not rects:
+                        continue
+                    if self._rects_cover_page(rects, float(page.rect.width), page_height):
                         LOGGER.debug(
                             "Skipping page-sized image %s on page %s",
                             xref,
@@ -361,14 +376,29 @@ class PDFToHTMLConverter:
                     asset_path = self.assets_dir / f"page_{page_index + 1}_image_{image_number}.{extension}"
                     with open(asset_path, "wb") as fh:
                         fh.write(image_bytes)
-                    page_images.append(str(asset_path.relative_to(self.output_dir)))
+
+                    relative_path = str(asset_path.relative_to(self.output_dir))
+                    for rect in rects:
+                        left = float(rect.x0)
+                        top = page_height - float(rect.y1)
+                        width = float(rect.width)
+                        height = float(rect.height)
+                        page_images.append(
+                            ImageElement(
+                                src=relative_path,
+                                left=left,
+                                top=top,
+                                width=width,
+                                height=height,
+                            )
+                        )
                 embedded.append(page_images)
         return embedded
 
-    def _extract_images_with_pdfminer(self) -> list[list[str]]:
+    def _extract_images_with_pdfminer(self) -> list[list[ImageElement]]:
         _ensure_pdfminer()
         laparams = self._laparams or LAParams(line_margin=0.1, char_margin=2.0, word_margin=0.2)
-        embedded: list[list[str]] = []
+        embedded: list[list[ImageElement]] = []
 
         page_layouts = self._cached_pdfminer_pages
         if not page_layouts:
@@ -376,9 +406,10 @@ class PDFToHTMLConverter:
             self._cached_pdfminer_pages = page_layouts
 
         for page_index, page_layout in enumerate(page_layouts):
-            page_images: list[str] = []
+            page_images: list[ImageElement] = []
             self._clear_page_image_assets(page_index)
             page_area = self._pdfminer_page_area(page_layout)
+            page_height = float(getattr(page_layout, "height", 0.0) or 0.0)
             for image_number, image in enumerate(self._iter_lt_images(page_layout), start=1):
                 if self._pdfminer_image_covers_page(image, page_area):
                     LOGGER.debug(
@@ -387,9 +418,26 @@ class PDFToHTMLConverter:
                         page_index + 1,
                     )
                     continue
+                bbox = getattr(image, "bbox", None)
+                if not bbox or len(bbox) != 4:
+                    continue
                 saved = self._save_raw_image(page_index, image_number, image)
                 if saved:
-                    page_images.append(saved)
+                    x0, y0, x1, y1 = bbox
+                    width = float(x1 - x0)
+                    height = float(y1 - y0)
+                    if width <= 0 or height <= 0:
+                        continue
+                    top = page_height - float(y1)
+                    page_images.append(
+                        ImageElement(
+                            src=saved,
+                            left=float(x0),
+                            top=top,
+                            width=width,
+                            height=height,
+                        )
+                    )
             embedded.append(page_images)
 
         return embedded
@@ -434,18 +482,33 @@ class PDFToHTMLConverter:
 
         return str(asset_path.relative_to(self.output_dir))
 
-    def _pymupdf_image_covers_page(self, page, xref: int) -> bool:
-        page_area = float(page.rect.width * page.rect.height)
+    def _pymupdf_image_rects(self, page, xref: int) -> list[Any]:
+        try:
+            rects = list(page.get_image_rects(xref))
+        except Exception:  # pragma: no cover - PyMuPDF internals
+            rects = []
+        return rects
+
+    def _rects_cover_page(
+        self,
+        rects: Sequence[Any],
+        page_width: float,
+        page_height: float,
+    ) -> bool:
+        page_area = page_width * page_height
         if page_area <= 0:
             return False
 
         coverage = 0.0
-        try:
-            rects = page.get_image_rects(xref)
-        except Exception:  # pragma: no cover - PyMuPDF internals
-            rects = []
-        for rect in rects or []:
-            coverage = max(coverage, float(rect.width * rect.height) / page_area)
+        for rect in rects:
+            try:
+                width = float(rect.width)
+                height = float(rect.height)
+            except AttributeError:  # pragma: no cover - defensive path
+                continue
+            if width <= 0 or height <= 0:
+                continue
+            coverage = max(coverage, (width * height) / page_area)
         return coverage >= MAX_EMBEDDED_IMAGE_PAGE_COVERAGE
 
     def _pdfminer_page_area(self, page_layout: Any) -> float:
@@ -555,6 +618,10 @@ class PDFToHTMLConverter:
             "  font-weight: 400;",
             "  font-style: normal;",
             "}",
+            ".page__image {",
+            "  position: absolute;",
+            "  display: block;",
+            "}",
         ]
         css_lines = ["/* Generated by Agentkit PDF to HTML converter */", *base_styles]
 
@@ -563,6 +630,20 @@ class PDFToHTMLConverter:
             for text_idx, text in enumerate(layout.texts, start=1):
                 css_lines.append(
                     f".page--{index} .text--{text_idx} {{ {text.to_css(scale=text_scale)} }}"
+                )
+            for image_idx, image in enumerate(layout.images, start=1):
+                if image.width <= 0 or image.height <= 0:
+                    continue
+                css_lines.append(
+                    ".page--{index} .image--{image_idx} {{ left: {left:.2f}px; top: {top:.2f}px; "
+                    "width: {width:.2f}px; height: {height:.2f}px; }}".format(
+                        index=index,
+                        image_idx=image_idx,
+                        left=image.left,
+                        top=image.top,
+                        width=image.width,
+                        height=image.height,
+                    )
                 )
 
         return "\n".join(css_lines) + "\n"
@@ -586,6 +667,13 @@ class PDFToHTMLConverter:
 
             for index, layout in enumerate(layouts, start=1):
                 fh.write(f"  <section class=\"page page--{index}\" data-page=\"{index}\">\n")
+                for image_idx, image in enumerate(layout.images, start=1):
+                    if image.width <= 0 or image.height <= 0:
+                        continue
+                    src = image.src.replace("&", "&amp;").replace("\"", "&quot;")
+                    fh.write(
+                        f"    <img class=\"page__image image--{image_idx}\" src=\"{src}\" alt=\"Embedded image {image_idx}\">\n"
+                    )
                 for text_idx, text in enumerate(layout.texts, start=1):
                     safe_text = text.text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                     fh.write(
@@ -608,8 +696,8 @@ class PDFToHTMLConverter:
                     "width": layout.width,
                     "height": layout.height,
                     "text_count": len(layout.texts),
-                    "image_count": len([img for img in layout.images if img]),
-                    "images": layout.images,
+                    "image_count": len(layout.images),
+                    "images": [dataclasses.asdict(image) for image in layout.images],
                     "reference": page_renders[index] if index < len(page_renders) else None,
                 }
                 for index, layout in enumerate(layouts)

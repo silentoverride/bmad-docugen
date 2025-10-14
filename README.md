@@ -6,7 +6,7 @@ This project provides a command line utility that transforms PDF documents into 
 
 - Extracts positioned text layers from PDFs using `pdfminer.six` and renders them as absolutely positioned HTML elements.
 - Optionally rasterizes each page with [PyMuPDF](https://pymupdf.readthedocs.io/) or [pdf2image](https://github.com/Belval/pdf2image) to create high-fidelity reference images for regression testing (they are not embedded in the HTML output).
-- Saves every embedded image from the PDF into an `assets/` directory for use inside the generated template.
+- Saves every embedded image from the PDF into an `assets/` directory and positions the smaller ones (like logos) directly inside the generated template.
 - Infers font families, weights, and styles from the PDF metadata to better match original typography.
 - Produces a clean HTML template with inline styles and a manifest describing the conversion output.
 - Includes a visual regression workflow powered by [Playwright](https://playwright.dev/python/) that screenshots the generated HTML and compares it to the PDF rasterization using perceptual difference metrics.
@@ -53,11 +53,11 @@ from pathlib import Path
 from agentkit import PDFToHTMLConverter
 
 converter = PDFToHTMLConverter(Path("input.pdf"), Path("output"))
-image_paths = converter.extract_embedded_images()
-# image_paths is a list of lists keyed by page -> ["assets/page_1_image_1.jpg", ...]
+image_metadata = converter.extract_embedded_images()
+# image_metadata is keyed by page -> [{"src": "assets/page_1_image_1.png", "left": 42.0, "top": 18.0, ...}, ...]
 ```
 
-Each call overwrites the corresponding files in the `assets/` folder so the paths always reflect the most recent extraction. Images that cover most of a page (such as a flattened background) are skipped so that only smaller assets like logos are emitted.
+Each call overwrites the corresponding files in the `assets/` folder so the paths always reflect the most recent extraction. The converter also uses this metadata to place `<img>` tags in the HTML output automatically. Images that cover most of a page (such as a flattened background) are skipped so that only smaller assets like logos are emitted.
 
 ### Flags
 
