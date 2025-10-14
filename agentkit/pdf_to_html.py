@@ -190,8 +190,15 @@ class PDFToHTMLConverter:
             Path to the generated HTML file.
         """
 
-     https://github.com/silentoverride/bmad-docugen/pull/8/conflict?name=agentkit%252Fpdf_to_html.py&base_oid=a4387bd91256d492d79c1c4a05a5256650762fa9&head_oid=02becdbc06da729bed649eab4c7a5f7835810877   LOGGER.info("Starting conversion of %s", self.pdf_path)
+        LOGGER.info("Starting conversion of %s", self.pdf_path)
         layouts = list(self._extract_layout())
+        if not layouts:
+            LOGGER.warning("No pages were extracted from %s", self.pdf_path)
+            html_path = self.output_dir / "index.html"
+            css = self._build_css(layouts, text_scale=text_scale)
+            self._write_html(html_path, layouts, css)
+            self._write_manifest(layouts, [], text_scale)
+            return html_path
         embedded_images = self.extract_embedded_images()
         for index, page_images in enumerate(embedded_images):
             if index < len(layouts):
