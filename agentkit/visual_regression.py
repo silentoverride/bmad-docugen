@@ -58,8 +58,7 @@ class VisualRegressionTester:
             with sync_playwright() as p:
                 browser = p.chromium.launch()
                 page = browser.new_page(viewport={"width": max(width, 10), "height": max(height, 10)})
-                target_uri = html_path.resolve().as_uri()
-                page.goto(target_uri)
+                page.goto(html_path.as_uri())
                 page.wait_for_timeout(int(self.wait_for * 1000))
                 page.screenshot(path=str(output_path), full_page=True)
                 browser.close()
