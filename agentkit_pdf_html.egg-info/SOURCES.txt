@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+agentkit/__init__.py
+agentkit/cli.py
+agentkit/pdf_to_html.py
+agentkit/shared.py
+agentkit/visual_regression.py
+agentkit_pdf_html.egg-info/PKG-INFO
+agentkit_pdf_html.egg-info/SOURCES.txt
+agentkit_pdf_html.egg-info/dependency_links.txt
+agentkit_pdf_html.egg-info/entry_points.txt
+agentkit_pdf_html.egg-info/requires.txt
+agentkit_pdf_html.egg-info/top_level.txt
