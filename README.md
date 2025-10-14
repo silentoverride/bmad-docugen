@@ -5,7 +5,7 @@ This project provides a command line utility that transforms PDF documents into 
 ## Features
 
 - Extracts positioned text layers from PDFs using `pdfminer.six` and renders them as absolutely positioned HTML elements.
-- Generates background images for each page using either [PyMuPDF](https://pymupdf.readthedocs.io/) or [pdf2image](https://github.com/Belval/pdf2image) when the optional rendering dependencies are available.
+- Optionally rasterizes each page with [PyMuPDF](https://pymupdf.readthedocs.io/) or [pdf2image](https://github.com/Belval/pdf2image) to create high-fidelity reference images for regression testing (they are not embedded in the HTML output).
 - Saves every embedded image from the PDF into an `assets/` directory for use inside the generated template.
 - Infers font families, weights, and styles from the PDF metadata to better match original typography.
 - Produces a clean HTML template with inline styles and a manifest describing the conversion output.
@@ -24,7 +24,7 @@ The converter loads heavy dependencies lazily so that `agentkit --help` works ev
 conversion requires [`pdfminer.six`](https://github.com/pdfminer/pdfminer.six); the command will exit with an informative
 message if it is missing.
 
-To enable background rendering you will also need the optional dependencies and the relevant system packages (such as Poppler for `pdf2image`). You can install everything with:
+To enable reference rendering you will also need the optional dependencies and the relevant system packages (such as Poppler for `pdf2image`). You can install everything with:
 
 ```bash
 pip install -e .[render]
@@ -42,7 +42,7 @@ playwright install chromium
 agentkit path/to/input.pdf output-directory
 ```
 
-The command will generate `index.html`, a manifest file, and any extracted assets in the chosen output directory. The HTML file includes an inline `<style>` block so no separate stylesheet is required. After the initial conversion the visual regression loop will run automatically when reference page images are available, updating the template when improvements are detected.
+The command will generate `index.html`, a manifest file, and any extracted assets in the chosen output directory. The HTML file includes an inline `<style>` block so no separate stylesheet is required, and it renders text directly on a blank canvas without using page-sized background images. After the initial conversion the visual regression loop will run automatically when reference page images are available, updating the template when improvements are detected.
 
 ### Extracting embedded images only
 
@@ -63,7 +63,7 @@ Each call overwrites the corresponding files in the `assets/` folder so the path
 
 - `--iterations` – Number of refinement iterations to perform (default: 3).
 - `--no-regression` – Skip the regression loop entirely.
-- `--dpi` – Override the rasterization DPI used for the background images.
+- `--dpi` – Override the rasterization DPI used for the regression reference images.
 - `--log-level` – Adjust logging verbosity (defaults to `INFO`).
 
 ## Visual Regression Output

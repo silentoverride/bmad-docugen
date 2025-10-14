@@ -22,7 +22,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--iterations", type=int, default=3, help="Number of refinement iterations to run.")
     parser.add_argument("--no-regression", action="store_true", help="Skip the regression loop even if references exist.")
     parser.add_argument("--log-level", default="INFO", help="Python logging level (default: INFO).")
-    parser.add_argument("--dpi", type=int, default=144, help="DPI to use when rasterizing the PDF background.")
+    parser.add_argument(
+        "--dpi",
+        type=int,
+        default=144,
+        help="DPI to use when rasterizing reference images for regression testing.",
+    )
     return parser
 
 
@@ -43,7 +48,7 @@ def run(argv: List[str] | None = None) -> int:
         LOGGER.info("Skipping regression loop as requested.")
         return 0
 
-    # Use generated background images as reference if available
+    # Use generated reference images when available
     manifest_path = converter.output_dir / "manifest.json"
     references: List[Path] = []
     if manifest_path.exists():
@@ -52,9 +57,9 @@ def run(argv: List[str] | None = None) -> int:
         with open(manifest_path, "r", encoding="utf-8") as fh:
             manifest = json.load(fh)
         for page in manifest.get("pages", []):
-            background = page.get("background")
-            if background:
-                references.append(converter.output_dir / background)
+            reference = page.get("reference") or page.get("background")
+            if reference:
+                references.append(converter.output_dir / reference)
 
     if not references:
         LOGGER.warning("No reference images found for regression testing.")

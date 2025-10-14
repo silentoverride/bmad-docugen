@@ -190,17 +190,17 @@ class PDFToHTMLConverter:
             Path to the generated HTML file.
         """
 
-        LOGGER.info("Starting conversion of %s", self.pdf_path)
+     https://github.com/silentoverride/bmad-docugen/pull/8/conflict?name=agentkit%252Fpdf_to_html.py&base_oid=a4387bd91256d492d79c1c4a05a5256650762fa9&head_oid=02becdbc06da729bed649eab4c7a5f7835810877   LOGGER.info("Starting conversion of %s", self.pdf_path)
         layouts = list(self._extract_layout())
         embedded_images = self.extract_embedded_images()
         for index, page_images in enumerate(embedded_images):
             if index < len(layouts):
                 layouts[index].images = page_images
-        page_images = self._render_page_images()
+        page_renders = self._render_page_images()
         html_path = self.output_dir / "index.html"
         css = self._build_css(layouts, text_scale=text_scale)
-        self._write_html(html_path, layouts, page_images, css)
-        self._write_manifest(layouts, page_images, text_scale)
+        self._write_html(html_path, layouts, css)
+        self._write_manifest(layouts, page_renders, text_scale)
 
         LOGGER.info("Finished conversion -> %s", html_path)
         return html_path
@@ -540,13 +540,6 @@ class PDFToHTMLConverter:
             "  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);",
             "  background: white;",
             "}",
-            ".page__background {",
-            "  position: absolute;",
-            "  inset: 0;",
-            "  background-size: cover;",
-            "  background-position: top left;",
-            "  opacity: 0.98;",
-            "}",
             ".page__text {",
             "  position: absolute;",
             "  white-space: pre;",
@@ -571,7 +564,6 @@ class PDFToHTMLConverter:
         self,
         path: Path,
         layouts: Sequence[PageLayout],
-        page_images: Sequence[str | None],
         css: str,
     ) -> None:
         with open(path, "w", encoding="utf-8") as fh:
@@ -587,12 +579,6 @@ class PDFToHTMLConverter:
 
             for index, layout in enumerate(layouts, start=1):
                 fh.write(f"  <section class=\"page page--{index}\" data-page=\"{index}\">\n")
-                image_url = page_images[index - 1] if index - 1 < len(page_images) else None
-                if image_url:
-                    fh.write(
-                        "    <div class=\"page__background\" "
-                        f"style=\"background-image: url('{image_url}');\"></div>\n"
-                    )
                 for text_idx, text in enumerate(layout.texts, start=1):
                     safe_text = text.text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                     fh.write(
@@ -605,7 +591,7 @@ class PDFToHTMLConverter:
     def _write_manifest(
         self,
         layouts: Sequence[PageLayout],
-        page_images: Sequence[str | None],
+        page_renders: Sequence[str | None],
         text_scale: float,
     ) -> None:
         manifest = {
@@ -617,7 +603,7 @@ class PDFToHTMLConverter:
                     "text_count": len(layout.texts),
                     "image_count": len([img for img in layout.images if img]),
                     "images": layout.images,
-                    "background": page_images[index] if index < len(page_images) else None,
+                    "reference": page_renders[index] if index < len(page_renders) else None,
                 }
                 for index, layout in enumerate(layouts)
             ],
