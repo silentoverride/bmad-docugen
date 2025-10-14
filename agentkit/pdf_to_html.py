@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -22,6 +23,51 @@ except ImportError:  # pragma: no cover - optional dependency
 
 LAParams = LTChar = LTImage = LTTextBox = LTTextBoxHorizontal = LTTextContainer = None  # type: ignore
 extract_pages = None  # type: ignore
+
+FONT_WEIGHT_KEYWORDS: list[tuple[str, str]] = [
+    ("black", "900"),
+    ("heavy", "900"),
+    ("extrabold", "800"),
+    ("ultrabold", "800"),
+    ("bold", "700"),
+    ("semibold", "600"),
+    ("demibold", "600"),
+    ("medium", "500"),
+    ("book", "500"),
+    ("light", "300"),
+    ("thin", "200"),
+]
+
+FONT_STYLE_KEYWORDS: list[tuple[str, str]] = [
+    ("italic", "italic"),
+    ("oblique", "italic"),
+    ("slant", "italic"),
+]
+
+FONT_FAMILY_OMIT_TOKENS = {
+    "bold",
+    "italic",
+    "oblique",
+    "regular",
+    "light",
+    "thin",
+    "black",
+    "heavy",
+    "book",
+    "medium",
+    "semibold",
+    "demibold",
+    "extrabold",
+    "ultrabold",
+    "ultra",
+    "extra",
+    "condensed",
+    "extended",
+    "narrow",
+    "compressed",
+}
+
+MAX_EMBEDDED_IMAGE_PAGE_COVERAGE = 0.6
 
 
 def _ensure_pdfminer() -> None:
@@ -70,16 +116,34 @@ class TextElement:
     height: float
     font_size: float
     font_name: str | None = None
+    font_family: str | None = None
+    font_weight: str | None = None
+    font_style: str | None = None
 
     def to_css(self, scale: float = 1.0) -> str:
         """Return CSS rules for the text element."""
 
         font_size = self.font_size * scale
-        return (
-            f"left: {self.left:.2f}px; top: {self.top:.2f}px;"
-            f" width: {self.width:.2f}px; height: {self.height:.2f}px;"
-            f" font-size: {font_size:.2f}px;"
-        )
+        rules = [
+            f"left: {self.left:.2f}px",
+            f"top: {self.top:.2f}px",
+            f"width: {self.width:.2f}px",
+            f"height: {self.height:.2f}px",
+            f"font-size: {font_size:.2f}px",
+        ]
+
+        if self.font_weight:
+            rules.append(f"font-weight: {self.font_weight}")
+        if self.font_style:
+            rules.append(f"font-style: {self.font_style}")
+        if self.font_family:
+            family = self.font_family.replace('"', "\"")
+            rules.append(
+                "font-family: "
+                f"\"{family}\", 'Helvetica Neue', Arial, sans-serif"
+            )
+
+        return "; ".join(rules) + ";"
 
 
 @dataclasses.dataclass
@@ -134,10 +198,8 @@ class PDFToHTMLConverter:
                 layouts[index].images = page_images
         page_images = self._render_page_images()
         html_path = self.output_dir / "index.html"
-        css_path = self.output_dir / "styles.css"
-
-        self._write_css(css_path, layouts, text_scale=text_scale)
-        self._write_html(html_path, layouts, page_images)
+        css = self._build_css(layouts, text_scale=text_scale)
+        self._write_html(html_path, layouts, page_images, css)
         self._write_manifest(layouts, page_images, text_scale)
 
         LOGGER.info("Finished conversion -> %s", html_path)
@@ -185,6 +247,7 @@ class PDFToHTMLConverter:
 
             font_size = sum(char.size for char in line_chars) / len(line_chars)
             font_name = line_chars[0].fontname if line_chars else None
+            font_family, font_style, font_weight = self._parse_font_details(font_name)
 
             # Convert PDF coordinate system (origin bottom-left) to CSS (top-left)
             top = page_height - y1
@@ -197,6 +260,9 @@ class PDFToHTMLConverter:
                     height=y1 - y0,
                     font_size=font_size,
                     font_name=font_name,
+                    font_family=font_family,
+                    font_style=font_style,
+                    font_weight=font_weight,
                 )
             )
         return elements
@@ -204,6 +270,47 @@ class PDFToHTMLConverter:
     # ------------------------------------------------------------------
     # Image extraction and rendering
     # ------------------------------------------------------------------
+    def _parse_font_details(self, font_name: str | None) -> tuple[str | None, str | None, str | None]:
+        if not font_name:
+            return None, None, None
+
+        base_name = font_name.split("+")[-1]
+        normalized = base_name.replace(".", " ").replace("_", " ")
+        normalized = re.sub(r"\s+", " ", normalized)
+        lowered = normalized.lower()
+
+        font_weight: str | None = None
+        for keyword, weight in FONT_WEIGHT_KEYWORDS:
+            if keyword in lowered:
+                font_weight = weight
+                break
+
+        font_style: str | None = None
+        for keyword, style in FONT_STYLE_KEYWORDS:
+            if keyword in lowered:
+                font_style = style
+                break
+
+        # Extract a human-readable family name by removing stylistic tokens.
+        tokens = re.split(r"[^A-Za-z]+", normalized)
+        family_tokens: list[str] = []
+        for token in tokens:
+            if not token:
+                continue
+            lowered_token = token.lower()
+            if lowered_token in FONT_FAMILY_OMIT_TOKENS or any(
+                keyword in lowered_token for keyword in FONT_FAMILY_OMIT_TOKENS
+            ):
+                continue
+            humanized = re.sub(r"(?<!^)(?=[A-Z])", " ", token)
+            family_tokens.append(humanized)
+
+        family = " ".join(family_tokens).strip()
+        if not family:
+            family = None
+
+        return family, font_style, font_weight
+
     def extract_embedded_images(self) -> list[list[str]]:
         """Extract all embedded images into the assets directory.
 
@@ -227,6 +334,13 @@ class PDFToHTMLConverter:
                 self._clear_page_image_assets(page_index)
                 for image_number, image_info in enumerate(page.get_images(full=True), start=1):
                     xref = image_info[0]
+                    if self._pymupdf_image_covers_page(page, xref):
+                        LOGGER.debug(
+                            "Skipping page-sized image %s on page %s",
+                            xref,
+                            page_index + 1,
+                        )
+                        continue
                     try:
                         base_image = doc.extract_image(xref)
                     except RuntimeError as exc:  # pragma: no cover - rare corrupt PDFs
@@ -257,7 +371,15 @@ class PDFToHTMLConverter:
         for page_index, page_layout in enumerate(page_layouts):
             page_images: list[str] = []
             self._clear_page_image_assets(page_index)
+            page_area = self._pdfminer_page_area(page_layout)
             for image_number, image in enumerate(self._iter_lt_images(page_layout), start=1):
+                if self._pdfminer_image_covers_page(image, page_area):
+                    LOGGER.debug(
+                        "Skipping page-sized image %s on page %s",
+                        getattr(image, "name", ""),
+                        page_index + 1,
+                    )
+                    continue
                 saved = self._save_raw_image(page_index, image_number, image)
                 if saved:
                     page_images.append(saved)
@@ -305,6 +427,40 @@ class PDFToHTMLConverter:
 
         return str(asset_path.relative_to(self.output_dir))
 
+    def _pymupdf_image_covers_page(self, page, xref: int) -> bool:
+        page_area = float(page.rect.width * page.rect.height)
+        if page_area <= 0:
+            return False
+
+        coverage = 0.0
+        try:
+            rects = page.get_image_rects(xref)
+        except Exception:  # pragma: no cover - PyMuPDF internals
+            rects = []
+        for rect in rects or []:
+            coverage = max(coverage, float(rect.width * rect.height) / page_area)
+        return coverage >= MAX_EMBEDDED_IMAGE_PAGE_COVERAGE
+
+    def _pdfminer_page_area(self, page_layout: Any) -> float:
+        width = float(getattr(page_layout, "width", 0.0) or 0.0)
+        height = float(getattr(page_layout, "height", 0.0) or 0.0)
+        area = width * height
+        return area if area > 0 else 0.0
+
+    def _pdfminer_image_covers_page(self, image: Any, page_area: float) -> bool:
+        if page_area <= 0:
+            return False
+        bbox = getattr(image, "bbox", None)
+        if not bbox or len(bbox) != 4:
+            return False
+        x0, y0, x1, y1 = bbox
+        width = float(x1 - x0)
+        height = float(y1 - y0)
+        if width <= 0 or height <= 0:
+            return False
+        coverage = (width * height) / page_area
+        return coverage >= MAX_EMBEDDED_IMAGE_PAGE_COVERAGE
+
     def _resolve_image_extension(self, filters: Sequence[str], image: LTImage) -> str:
         filter_set = {f.lower() for f in filters}
         if "dctdecode" in filter_set:
@@ -337,7 +493,7 @@ class PDFToHTMLConverter:
             LOGGER.warning("Neither PyMuPDF nor pdf2image is available; background images disabled.")
             return [None] * self._page_count()
 
-        images: List[Optional[str]] = []
+        images: list[str | None] = []
         if fitz is not None:
             doc = fitz.open(self.pdf_path)
             for page_number in range(doc.page_count):
@@ -371,7 +527,7 @@ class PDFToHTMLConverter:
     # ------------------------------------------------------------------
     # Output writers
     # ------------------------------------------------------------------
-    def _write_css(self, path: Path, layouts: Sequence[PageLayout], *, text_scale: float) -> None:
+    def _build_css(self, layouts: Sequence[PageLayout], *, text_scale: float) -> str:
         base_styles = [
             "body {",
             "  margin: 0;",
@@ -395,32 +551,38 @@ class PDFToHTMLConverter:
             "  position: absolute;",
             "  white-space: pre;",
             "  color: #000;",
+            "  font-family: 'Helvetica Neue', Arial, sans-serif;",
+            "  font-weight: 400;",
+            "  font-style: normal;",
             "}",
         ]
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write("/* Generated by Agentkit PDF to HTML converter */\n")
-            fh.write("\n".join(base_styles))
-            fh.write("\n")
+        css_lines = ["/* Generated by Agentkit PDF to HTML converter */", *base_styles]
 
-            for index, layout in enumerate(layouts, start=1):
-                fh.write(f".page--{index} {{ width: {layout.width:.2f}px; height: {layout.height:.2f}px; }}\n")
-                for text_idx, text in enumerate(layout.texts, start=1):
-                    fh.write(
-                        f".page--{index} .text--{text_idx} {{ {text.to_css(scale=text_scale)} }}\n"
-                    )
+        for index, layout in enumerate(layouts, start=1):
+            css_lines.append(f".page--{index} {{ width: {layout.width:.2f}px; height: {layout.height:.2f}px; }}")
+            for text_idx, text in enumerate(layout.texts, start=1):
+                css_lines.append(
+                    f".page--{index} .text--{text_idx} {{ {text.to_css(scale=text_scale)} }}"
+                )
+
+        return "\n".join(css_lines) + "\n"
 
     def _write_html(
         self,
         path: Path,
         layouts: Sequence[PageLayout],
         page_images: Sequence[str | None],
+        css: str,
     ) -> None:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
             fh.write("  <meta charset=\"utf-8\">\n")
             fh.write("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
             fh.write("  <title>PDF Conversion</title>\n")
-            fh.write("  <link rel=\"stylesheet\" href=\"styles.css\">\n")
+            fh.write("  <style>\n")
+            for line in css.splitlines():
+                fh.write(f"    {line}\n")
+            fh.write("  </style>\n")
             fh.write("</head>\n<body>\n")
 
             for index, layout in enumerate(layouts, start=1):
