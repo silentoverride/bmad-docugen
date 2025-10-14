@@ -380,7 +380,9 @@ class PDFToHTMLConverter:
                     relative_path = str(asset_path.relative_to(self.output_dir))
                     for rect in rects:
                         left = float(rect.x0)
-                        top = page_height - float(rect.y1)
+                        # PyMuPDF uses a top-left origin where Y increases downward,
+                        # so we can use the rect's top coordinate directly.
+                        top = float(rect.y0)
                         width = float(rect.width)
                         height = float(rect.height)
                         page_images.append(
