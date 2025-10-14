@@ -7,6 +7,7 @@ This project provides a command line utility that transforms PDF documents into 
 - Extracts positioned text layers from PDFs using `pdfminer.six` and renders them as absolutely positioned HTML elements.
 - Optionally rasterizes each page with [PyMuPDF](https://pymupdf.readthedocs.io/) or [pdf2image](https://github.com/Belval/pdf2image) to create high-fidelity reference images for regression testing (they are not embedded in the HTML output).
 - Saves every embedded image from the PDF into an `assets/` directory and positions the smaller ones (like logos) directly inside the generated template.
+- Detects filled vector rectangles (such as colored banners or callout boxes) and re-creates them as absolutely positioned background layers.
 - Infers font families, weights, and styles from the PDF metadata to better match original typography.
 - Produces a clean HTML template with inline styles and a manifest describing the conversion output.
 - Includes a visual regression workflow powered by [Playwright](https://playwright.dev/python/) that screenshots the generated HTML and compares it to the PDF rasterization using perceptual difference metrics.
@@ -42,7 +43,7 @@ playwright install chromium
 agentkit path/to/input.pdf output-directory
 ```
 
-The command will generate `index.html`, a manifest file, and any extracted assets in the chosen output directory. The HTML file includes an inline `<style>` block so no separate stylesheet is required, and it renders text directly on a blank canvas without using page-sized background images. After the initial conversion the visual regression loop will run automatically when reference page images are available, updating the template when improvements are detected.
+The command will generate `index.html`, a manifest file, and any extracted assets in the chosen output directory. The HTML file includes an inline `<style>` block so no separate stylesheet is required, and it renders text directly on a blank canvas without using page-sized background images while still layering colored rectangles where the PDF defines them. After the initial conversion the visual regression loop will run automatically when reference page images are available, updating the template when improvements are detected.
 
 ### Extracting embedded images only
 

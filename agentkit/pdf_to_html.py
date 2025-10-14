@@ -147,16 +147,6 @@ class TextElement:
 
 
 @dataclasses.dataclass
-class PageLayout:
-    """Container for layout information of a single PDF page."""
-
-    width: float
-    height: float
-    texts: list[TextElement]
-    images: list["ImageElement"]
-
-
-@dataclasses.dataclass
 class ImageElement:
     """Represents an embedded image extracted from a PDF page."""
 
@@ -165,6 +155,28 @@ class ImageElement:
     top: float
     width: float
     height: float
+
+
+@dataclasses.dataclass
+class ShapeElement:
+    """Represents a filled vector shape extracted from a PDF page."""
+
+    left: float
+    top: float
+    width: float
+    height: float
+    background: str
+
+
+@dataclasses.dataclass
+class PageLayout:
+    """Container for layout information of a single PDF page."""
+
+    width: float
+    height: float
+    texts: list[TextElement]
+    images: list["ImageElement"]
+    shapes: list[ShapeElement]
 
 
 class PDFToHTMLConverter:
@@ -210,6 +222,7 @@ class PDFToHTMLConverter:
             self._write_html(html_path, layouts, css)
             self._write_manifest(layouts, [], text_scale)
             return html_path
+        self._populate_vector_shapes(layouts)
         embedded_images = self.extract_embedded_images()
         for index, page_images in enumerate(embedded_images):
             if index < len(layouts):
@@ -236,6 +249,7 @@ class PDFToHTMLConverter:
         for page_index, page_layout in enumerate(page_layouts):
             texts: list[TextElement] = []
             images: list[ImageElement] = []
+            shapes: list[ShapeElement] = []
             width = float(getattr(page_layout, "width", 0) or 0)
             height = float(getattr(page_layout, "height", 0) or 0)
 
@@ -244,7 +258,7 @@ class PDFToHTMLConverter:
                     texts.extend(self._extract_text_elements(element, height))
 
             LOGGER.debug("Page %s extracted: %s texts", page_index + 1, len(texts))
-            yield PageLayout(width=width, height=height, texts=texts, images=images)
+            yield PageLayout(width=width, height=height, texts=texts, images=images, shapes=shapes)
 
         # Leave the cached page layouts accessible for image extraction fallbacks.
 
@@ -396,6 +410,158 @@ class PDFToHTMLConverter:
                         )
                 embedded.append(page_images)
         return embedded
+
+    def _populate_vector_shapes(self, layouts: Sequence[PageLayout]) -> None:
+        if fitz is None:
+            LOGGER.debug("PyMuPDF is unavailable; skipping vector shape extraction.")
+            return
+
+        try:
+            doc = fitz.open(self.pdf_path)  # type: ignore[arg-type]
+        except Exception as exc:  # pragma: no cover - depends on PDF integrity
+            LOGGER.warning("Failed to open PDF for vector shapes: %s", exc)
+            return
+
+        with doc:
+            for page_index, layout in enumerate(layouts):
+                if page_index >= doc.page_count:
+                    break
+                try:
+                    page = doc.load_page(page_index)
+                except Exception as exc:  # pragma: no cover - PyMuPDF runtime errors
+                    LOGGER.debug("Skipping vector shapes on page %s: %s", page_index + 1, exc)
+                    continue
+
+                page_area = layout.width * layout.height
+                if page_area <= 0:
+                    continue
+
+                drawings = []
+                try:
+                    drawings = page.get_drawings()
+                except Exception as exc:  # pragma: no cover - PyMuPDF runtime errors
+                    LOGGER.debug("Failed to read drawings on page %s: %s", page_index + 1, exc)
+                    continue
+
+                for drawing in drawings:
+                    fill = drawing.get("fill")
+                    if not fill:
+                        continue
+                    color = self._color_tuple_to_css(fill, drawing.get("fill_opacity"))
+                    if color is None:
+                        continue
+                    for rect in self._shape_rects_from_drawing(drawing):
+                        width = float(rect.width)
+                        height = float(rect.height)
+                        if width <= 0 or height <= 0:
+                            continue
+                        layout.shapes.append(
+                            ShapeElement(
+                                left=float(rect.x0),
+                                top=float(rect.y0),
+                                width=width,
+                                height=height,
+                                background=color,
+                            )
+                        )
+
+    def _shape_rects_from_drawing(self, drawing: Any) -> Iterable[Any]:
+        items = drawing.get("items") or []
+        path_points: list[tuple[float, float]] = []
+        for item in items:
+            if not item or len(item) < 2:
+                continue
+            op = item[0]
+            data = item[1]
+            if op == "re" and data is not None:
+                if path_points:
+                    rect = self._points_to_rect(path_points)
+                    if rect is not None:
+                        yield rect
+                    path_points = []
+                yield data
+                continue
+
+            if op == "m" and path_points:
+                rect = self._points_to_rect(path_points)
+                if rect is not None:
+                    yield rect
+                path_points = []
+
+            points = self._extract_points(data)
+            if points:
+                path_points.extend(points)
+
+            if op in {"h", "n"} and path_points:
+                rect = self._points_to_rect(path_points)
+                if rect is not None:
+                    yield rect
+                path_points = []
+
+        if path_points:
+            rect = self._points_to_rect(path_points)
+            if rect is not None:
+                yield rect
+
+    def _extract_points(self, data: Any) -> list[tuple[float, float]]:
+        points: list[tuple[float, float]] = []
+
+        if hasattr(data, "x") and hasattr(data, "y"):
+            points.append((float(data.x), float(data.y)))
+        elif isinstance(data, (list, tuple)):
+            for item in data:
+                if hasattr(item, "x") and hasattr(item, "y"):
+                    points.append((float(item.x), float(item.y)))
+                elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                    try:
+                        x = float(item[0])
+                        y = float(item[1])
+                    except (TypeError, ValueError):
+                        continue
+                    points.append((x, y))
+        return points
+
+    def _points_to_rect(self, points: Sequence[tuple[float, float]]) -> Any:
+        if len(points) < 2:
+            return None
+
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        min_x = min(xs)
+        max_x = max(xs)
+        min_y = min(ys)
+        max_y = max(ys)
+
+        if max_x <= min_x or max_y <= min_y:
+            return None
+
+        if fitz is not None:
+            return fitz.Rect(min_x, min_y, max_x, max_y)
+
+        return type("Rect", (), {"x0": min_x, "y0": min_y, "x1": max_x, "y1": max_y, "width": max_x - min_x, "height": max_y - min_y})()
+
+    def _color_tuple_to_css(self, color: Sequence[float] | None, opacity: float | None) -> str | None:
+        if not color:
+            return None
+
+        components = list(color)
+        if not components:
+            return None
+
+        if len(components) >= 3:
+            r, g, b = (max(0, min(255, round(component * 255))) for component in components[:3])
+        else:
+            value = max(0, min(255, round(components[0] * 255)))
+            r = g = b = value
+
+        if opacity is None:
+            opacity = 1.0
+
+        opacity = max(0.0, min(1.0, float(opacity)))
+
+        if opacity < 1.0:
+            return f"rgba({r}, {g}, {b}, {opacity:.3f})"
+        return f"rgb({r}, {g}, {b})"
 
     def _extract_images_with_pdfminer(self) -> list[list[ImageElement]]:
         _ensure_pdfminer()
@@ -612,6 +778,10 @@ class PDFToHTMLConverter:
             "  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);",
             "  background: white;",
             "}",
+            ".page__shape {",
+            "  position: absolute;",
+            "  display: block;",
+            "}",
             ".page__text {",
             "  position: absolute;",
             "  white-space: pre;",
@@ -632,6 +802,19 @@ class PDFToHTMLConverter:
             for text_idx, text in enumerate(layout.texts, start=1):
                 css_lines.append(
                     f".page--{index} .text--{text_idx} {{ {text.to_css(scale=text_scale)} }}"
+                )
+            for shape_idx, shape in enumerate(layout.shapes, start=1):
+                css_lines.append(
+                    ".page--{index} .shape--{shape_idx} {{ left: {left:.2f}px; top: {top:.2f}px; "
+                    "width: {width:.2f}px; height: {height:.2f}px; background: {background}; }}".format(
+                        index=index,
+                        shape_idx=shape_idx,
+                        left=shape.left,
+                        top=shape.top,
+                        width=shape.width,
+                        height=shape.height,
+                        background=shape.background,
+                    )
                 )
             for image_idx, image in enumerate(layout.images, start=1):
                 if image.width <= 0 or image.height <= 0:
@@ -669,6 +852,12 @@ class PDFToHTMLConverter:
 
             for index, layout in enumerate(layouts, start=1):
                 fh.write(f"  <section class=\"page page--{index}\" data-page=\"{index}\">\n")
+                for shape_idx, shape in enumerate(layout.shapes, start=1):
+                    if shape.width <= 0 or shape.height <= 0:
+                        continue
+                    fh.write(
+                        f"    <div class=\"page__shape shape--{shape_idx}\" role=\"presentation\"></div>\n"
+                    )
                 for image_idx, image in enumerate(layout.images, start=1):
                     if image.width <= 0 or image.height <= 0:
                         continue
@@ -699,7 +888,9 @@ class PDFToHTMLConverter:
                     "height": layout.height,
                     "text_count": len(layout.texts),
                     "image_count": len(layout.images),
+                    "shape_count": len(layout.shapes),
                     "images": [dataclasses.asdict(image) for image in layout.images],
+                    "shapes": [dataclasses.asdict(shape) for shape in layout.shapes],
                     "reference": page_renders[index] if index < len(page_renders) else None,
                 }
                 for index, layout in enumerate(layouts)
