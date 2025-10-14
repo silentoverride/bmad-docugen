@@ -6,7 +6,9 @@ import dataclasses
 import json
 import logging
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, List, Optio
+49
+nal, Sequence
 
 from .shared import MissingDependencyError
 
