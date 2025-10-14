@@ -6,7 +6,6 @@ This project provides a command line utility that transforms PDF documents into 
 
 - Extracts positioned text layers from PDFs using `pdfminer.six` and renders them as absolutely positioned HTML elements.
 - Generates background images for each page using either [PyMuPDF](https://pymupdf.readthedocs.io/) or [pdf2image](https://github.com/Belval/pdf2image) when the optional rendering dependencies are available.
-- Saves every embedded image from the PDF into an `assets/` directory for use inside the generated template.
 - Produces a clean HTML template, stylesheet, and manifest describing the conversion output.
 - Includes a visual regression workflow powered by [Playwright](https://playwright.dev/python/) that screenshots the generated HTML and compares it to the PDF rasterization using perceptual difference metrics.
 - Automatically tunes font scaling over multiple iterations to minimize the detected visual differences.
@@ -42,21 +41,6 @@ agentkit path/to/input.pdf output-directory
 ```
 
 The command will generate `index.html`, `styles.css`, a manifest file, and any extracted assets in the chosen output directory. After the initial conversion the visual regression loop will run automatically when reference page images are available, updating the template when improvements are detected.
-
-### Extracting embedded images only
-
-If you need direct access to the images embedded inside the PDF, the converter exposes an `extract_embedded_images()` helper:
-
-```python
-from pathlib import Path
-from agentkit import PDFToHTMLConverter
-
-converter = PDFToHTMLConverter(Path("input.pdf"), Path("output"))
-image_paths = converter.extract_embedded_images()
-# image_paths is a list of lists keyed by page -> ["assets/page_1_image_1.jpg", ...]
-```
-
-Each call overwrites the corresponding files in the `assets/` folder so the paths always reflect the most recent extraction.
 
 ### Flags
 

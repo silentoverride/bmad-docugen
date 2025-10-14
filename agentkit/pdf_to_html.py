@@ -337,7 +337,7 @@ class PDFToHTMLConverter:
             LOGGER.warning("Neither PyMuPDF nor pdf2image is available; background images disabled.")
             return [None] * self._page_count()
 
-        images: list[str | None] = []
+        images: List[Optional[str]] = []
         if fitz is not None:
             doc = fitz.open(self.pdf_path)
             for page_number in range(doc.page_count):
